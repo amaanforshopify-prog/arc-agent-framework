@@ -87,3 +87,14 @@ from .trace import (
     TraceEvent,
     TraceManager,
 )
+
+from .retry import (
+    RetryError,
+    RetryManager,
+    RetryPolicy,
+    RetryStats,
+)
+"RetryError",
+"RetryManager",
+"RetryPolicy",
+"RetryStats",

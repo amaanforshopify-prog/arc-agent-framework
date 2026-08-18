@@ -1,32 +1,34 @@
-﻿from arc import (
+﻿import pytest
+
+from arc import (
     Agent,
     AgentRuntime,
     ContextManager,
     Memory,
     PlanningEngine,
+    TraceManager,
 )
 
 
 def make_agent():
-    engine = PlanningEngine()
     return Agent(
         name="RuntimeAgent",
-        executor=engine,
+        executor=PlanningEngine(),
     )
 
 
 def test_runtime_creation():
-    runtime = AgentRuntime(
-        make_agent()
-    )
+    runtime = AgentRuntime(make_agent())
 
     assert runtime.run_count() == 0
+    assert isinstance(
+        runtime.trace_manager,
+        TraceManager,
+    )
 
 
 def test_runtime_run():
-    runtime = AgentRuntime(
-        make_agent()
-    )
+    runtime = AgentRuntime(make_agent())
 
     run = runtime.run(
         "Simple task",
@@ -35,12 +37,11 @@ def test_runtime_run():
 
     assert run.success
     assert run.run_id == 1
+    assert run.trace is not None
 
 
 def test_runtime_result():
-    runtime = AgentRuntime(
-        make_agent()
-    )
+    runtime = AgentRuntime(make_agent())
 
     run = runtime.run(
         "Calculate",
@@ -67,9 +68,7 @@ def test_runtime_context():
 
 
 def test_runtime_multiple_runs():
-    runtime = AgentRuntime(
-        make_agent()
-    )
+    runtime = AgentRuntime(make_agent())
 
     runtime.run("One", ["First"])
     runtime.run("Two", ["Second"])
@@ -79,9 +78,7 @@ def test_runtime_multiple_runs():
 
 
 def test_last_run():
-    runtime = AgentRuntime(
-        make_agent()
-    )
+    runtime = AgentRuntime(make_agent())
 
     runtime.run(
         "Test",
@@ -93,9 +90,7 @@ def test_last_run():
 
 
 def test_clear_runs():
-    runtime = AgentRuntime(
-        make_agent()
-    )
+    runtime = AgentRuntime(make_agent())
 
     runtime.run(
         "Test",
@@ -109,9 +104,7 @@ def test_clear_runs():
 
 
 def test_snapshot():
-    runtime = AgentRuntime(
-        make_agent()
-    )
+    runtime = AgentRuntime(make_agent())
 
     runtime.run(
         "Test",
@@ -123,6 +116,7 @@ def test_snapshot():
     assert snapshot["runs"] == 1
     assert snapshot["context_messages"] == 2
     assert snapshot["last_run"] == 1
+    assert snapshot["last_trace_events"] > 0
 
 
 def test_memory_integration():
@@ -140,20 +134,14 @@ def test_memory_integration():
 
     assert run.success
     assert run.memory_used is False
-
     assert memory.has("run_1")
 
 
 def test_runtime_invalid_task():
-    runtime = AgentRuntime(
-        make_agent()
-    )
+    runtime = AgentRuntime(make_agent())
 
-    try:
+    with pytest.raises(ValueError):
         runtime.run("")
-        assert False
-    except ValueError:
-        assert True
 
 
 def test_runtime_reset_context():
@@ -172,3 +160,173 @@ def test_runtime_reset_context():
     runtime.reset_context()
 
     assert context.count() == 0
+
+
+def test_trace_created():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Trace test",
+        ["Step"],
+    )
+
+    assert run.trace is not None
+    assert run.trace.run_id == "run-1"
+
+
+def test_trace_has_events():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Trace test",
+        ["Step"],
+    )
+
+    event_types = [
+        event.event_type
+        for event in run.trace.events
+    ]
+
+    assert "run_started" in event_types
+    assert "planning_started" in event_types
+    assert "planning_completed" in event_types
+    assert "execution_started" in event_types
+    assert "execution_completed" in event_types
+    assert "run_completed" in event_types
+
+
+def test_trace_event_count():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Trace test",
+        ["Step"],
+    )
+
+    assert run.trace.count() >= 6
+
+
+def test_get_last_trace():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Trace test",
+        ["Step"],
+    )
+
+    trace = runtime.get_trace()
+
+    assert trace is run.trace
+
+
+def test_get_trace_by_id():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Trace test",
+        ["Step"],
+    )
+
+    trace = runtime.get_trace(run.run_id)
+
+    assert trace is run.trace
+
+
+def test_trace_finished():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Trace test",
+        ["Step"],
+    )
+
+    assert run.trace.finished_at is not None
+
+
+def test_custom_trace_manager():
+    manager = TraceManager()
+
+    runtime = AgentRuntime(
+        make_agent(),
+        trace_manager=manager,
+    )
+
+    run = runtime.run(
+        "Custom trace",
+        ["Step"],
+    )
+
+    assert manager.get(
+        "run-1"
+    ) is run.trace
+
+
+def test_trace_snapshot():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Snapshot",
+        ["Step"],
+    )
+
+    snapshot = run.trace.snapshot()
+
+    assert snapshot["run_id"] == "run-1"
+    assert snapshot["event_count"] > 0
+
+
+def test_memory_trace():
+    memory = Memory()
+
+    runtime = AgentRuntime(
+        make_agent(),
+        memory=memory,
+    )
+
+    run = runtime.run(
+        "Memory trace",
+        ["Step"],
+    )
+
+    events = [
+        event.event_type
+        for event in run.trace.events
+    ]
+
+    assert "memory_search_started" in events
+    assert "memory_search_completed" in events
+    assert "memory_saved" in events
+
+
+def test_context_trace():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Context trace",
+        ["Step"],
+    )
+
+    events = [
+        event.event_type
+        for event in run.trace.events
+    ]
+
+    assert "context_started" in events
+    assert "context_completed" in events
+
+
+def test_execution_trace():
+    runtime = AgentRuntime(make_agent())
+
+    run = runtime.run(
+        "Execution trace",
+        ["Step"],
+    )
+
+    events = [
+        event.event_type
+        for event in run.trace.events
+    ]
+
+    assert "execution_started" in events
+    assert "execution_completed" in events

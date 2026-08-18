@@ -8,10 +8,11 @@ from .context import ContextManager
 from .memory import Memory
 from .planning_engine import PlanningEngine, PlanningResult
 from .planner import Plan
+from .trace import Trace, TraceManager
 
 
 class AgentRuntimeError(Exception):
-    pass
+    """Base exception for AgentRuntime errors."""
 
 
 @dataclass
@@ -24,11 +25,12 @@ class AgentRun:
     planning_result: PlanningResult | None = None
     context_count: int = 0
     memory_used: bool = False
+    trace: Trace | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class AgentRuntime:
-    """Connects ARC Agent subsystems into one execution runtime."""
+    """Coordinates agent execution, memory, context, planning and tracing."""
 
     def __init__(
         self,
@@ -36,11 +38,14 @@ class AgentRuntime:
         planner_engine: PlanningEngine | None = None,
         context: ContextManager | None = None,
         memory: Memory | None = None,
+        trace_manager: TraceManager | None = None,
     ):
         self.agent = agent
         self.engine = planner_engine or PlanningEngine()
         self.context = context or ContextManager()
         self.memory = memory
+        self.trace_manager = trace_manager or TraceManager()
+
         self._run_counter = 0
         self.runs: list[AgentRun] = []
 
@@ -55,58 +60,117 @@ class AgentRuntime:
             raise ValueError("task cannot be empty.")
 
         self._run_counter += 1
+        numeric_id = self._run_counter
+        trace_id = f"run-{numeric_id}"
 
-        self.context.user(task)
+        trace = self.trace_manager.start(trace_id)
 
-        memory_used = False
+        try:
+            trace.emit(
+                "context_started",
+                task=task,
+            )
 
-        if self.memory is not None:
-            previous = self.memory.search(task)
+            self.context.user(task)
 
-            if previous:
-                memory_used = True
+            memory_used = False
 
-                self.context.system(
-                    f"Relevant memory: {previous}"
+            if self.memory is not None:
+                trace.emit("memory_search_started")
+
+                previous = self.memory.search(task)
+
+                if previous:
+                    memory_used = True
+                    self.context.system(
+                        f"Relevant memory: {previous}"
+                    )
+
+                trace.emit(
+                    "memory_search_completed",
+                    found=memory_used,
                 )
 
-        plan = self.engine.create_plan(
-            task,
-            steps,
-        )
-
-        planning_result = self.engine.execute(
-            plan,
-            stop_on_error=stop_on_error,
-        )
-
-        result = planning_result.final_result
-
-        if self.memory is not None and planning_result.success:
-            self.memory.store(
-                f"run_{self._run_counter}",
-                result,
+            trace.emit(
+                "planning_started",
+                task=task,
             )
 
-        if result is not None:
-            self.context.assistant(
-                str(result)
+            plan = self.engine.create_plan(
+                task,
+                steps,
             )
 
-        run = AgentRun(
-            run_id=self._run_counter,
-            task=task,
-            success=planning_result.success,
-            result=result,
-            plan=plan,
-            planning_result=planning_result,
-            context_count=self.context.count(),
-            memory_used=memory_used,
-        )
+            trace.emit(
+                "planning_completed",
+                step_count=len(plan.steps),
+            )
 
-        self.runs.append(run)
+            trace.emit(
+                "execution_started",
+            )
 
-        return run
+            planning_result = self.engine.execute(
+                plan,
+                stop_on_error=stop_on_error,
+            )
+
+            trace.emit(
+                "execution_completed",
+                success=planning_result.success,
+                completed_steps=planning_result.completed_steps,
+            )
+
+            result = planning_result.final_result
+
+            if self.memory is not None and planning_result.success:
+                self.memory.store(
+                    f"run_{numeric_id}",
+                    result,
+                )
+
+                trace.emit(
+                    "memory_saved",
+                    key=f"run_{numeric_id}",
+                )
+
+            if result is not None:
+                self.context.assistant(
+                    str(result)
+                )
+
+            trace.emit(
+                "context_completed",
+                message_count=self.context.count(),
+            )
+
+            run = AgentRun(
+                run_id=numeric_id,
+                task=task,
+                success=planning_result.success,
+                result=result,
+                plan=plan,
+                planning_result=planning_result,
+                context_count=self.context.count(),
+                memory_used=memory_used,
+                trace=trace,
+            )
+
+            self.runs.append(run)
+
+            return run
+
+        except Exception as exc:
+            trace.emit(
+                "run_failed",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+
+            raise
+
+        finally:
+            self.trace_manager.finish(trace_id)
 
     def last_run(self) -> AgentRun | None:
         if not self.runs:
@@ -123,13 +187,34 @@ class AgentRuntime:
     def reset_context(self) -> None:
         self.context.clear()
 
+    def get_trace(
+        self,
+        run_id: int | None = None,
+    ) -> Trace | None:
+
+        if run_id is None:
+            run = self.last_run()
+            return run.trace if run else None
+
+        return self.trace_manager.get(
+            f"run-{run_id}"
+        )
+
     def snapshot(self) -> dict[str, Any]:
+        last = self.last_run()
+
         return {
             "runs": self.run_count(),
             "context_messages": self.context.count(),
             "last_run": (
-                self.last_run().run_id
-                if self.last_run()
+                last.run_id
+                if last
                 else None
             ),
+            "last_trace_events": (
+                last.trace.count()
+                if last and last.trace
+                else 0
+            ),
         }
+
