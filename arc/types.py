@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -6,11 +8,24 @@ Role = Literal["system", "user", "assistant", "tool"]
 
 
 @dataclass
+class ToolFunction:
+    name: str
+    arguments: str
+
+
+@dataclass
+class ToolCall:
+    id: str
+    function: ToolFunction
+
+
+@dataclass
 class Message:
     role: Role
-    content: str
+    content: str | None = None
     name: str | None = None
     tool_call_id: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass

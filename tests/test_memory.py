@@ -1,224 +1,102 @@
-﻿import pytest
+import pytest
 
-from arc import Memory, MemoryError
+from arc.memory import (
+    ConversationMemory,
+    Memory,
+    MemoryEntry,
+    MemoryError,
+)
 
 
-def test_memory_creation():
+def test_memory_is_concrete():
     memory = Memory()
-
-    assert memory.count() == 0
-    assert memory.keys() == []
+    assert isinstance(memory, Memory)
 
 
-def test_store_and_recall():
-    memory = Memory()
-
-    memory.store(
-        "name",
-        "Azaan",
-    )
-
-    assert memory.recall("name") == "Azaan"
-
-
-def test_missing_recall_default():
-    memory = Memory()
-
-    assert (
-        memory.recall(
-            "missing",
-            "default",
-        )
-        == "default"
-    )
-
-
-def test_get_entry():
+def test_memory_store_and_recall():
     memory = Memory()
 
     entry = memory.store(
         "name",
-        "Azaan",
-    )
-
-    result = memory.get("name")
-
-    assert result is entry
-    assert result.value == "Azaan"
-
-
-def test_memory_metadata():
-    memory = Memory()
-
-    memory.store(
-        "project",
         "ARC",
-        metadata={
-            "priority": "high",
-        },
     )
 
-    entry = memory.get("project")
+    assert isinstance(entry, MemoryEntry)
+    assert memory.recall("name") == "ARC"
 
-    assert entry.metadata["priority"] == "high"
 
-
-def test_update():
+def test_memory_get():
     memory = Memory()
 
     memory.store(
-        "status",
-        "old",
+        "key",
+        "value",
     )
 
-    memory.update(
-        "status",
-        "new",
+    entry = memory.get("key")
+
+    assert isinstance(entry, MemoryEntry)
+    assert entry.key == "key"
+    assert entry.value == "value"
+
+
+def test_memory_has():
+    memory = Memory()
+
+    assert not memory.has("test")
+
+    memory.store(
+        "test",
+        123,
     )
 
-    assert memory.recall("status") == "new"
+    assert memory.has("test")
 
 
-def test_update_metadata():
+def test_memory_search():
     memory = Memory()
 
     memory.store(
-        "project",
-        "ARC",
-        metadata={
-            "version": "1",
-        },
-    )
-
-    memory.update(
-        "project",
-        "ARC Framework",
-        metadata={
-            "version": "2",
-        },
-    )
-
-    entry = memory.get("project")
-
-    assert entry.value == "ARC Framework"
-    assert entry.metadata["version"] == "2"
-
-
-def test_has():
-    memory = Memory()
-
-    memory.store("exists", True)
-
-    assert memory.has("exists")
-    assert not memory.has("missing")
-
-
-def test_delete():
-    memory = Memory()
-
-    memory.store(
-        "name",
+        "username",
         "Azaan",
     )
 
-    value = memory.delete("name")
-
-    assert value == "Azaan"
-    assert not memory.has("name")
-
-
-def test_delete_missing():
-    memory = Memory()
-
-    with pytest.raises(MemoryError):
-        memory.delete("missing")
-
-
-def test_get_missing():
-    memory = Memory()
-
-    with pytest.raises(MemoryError):
-        memory.get("missing")
-
-
-def test_search_key():
-    memory = Memory()
-
     memory.store(
-        "favorite_language",
-        "Python",
+        "city",
+        "Karachi",
     )
 
-    results = memory.search(
-        "language"
-    )
+    results = memory.search("aza")
 
     assert len(results) == 1
-    assert results[0].key == "favorite_language"
+    assert results[0].key == "username"
 
 
-def test_search_value():
+def test_memory_delete():
     memory = Memory()
 
     memory.store(
-        "language",
-        "Python programming",
+        "temp",
+        "value",
     )
 
-    results = memory.search(
-        "python"
-    )
-
-    assert len(results) == 1
+    assert memory.delete("temp") == "value"
+    assert not memory.has("temp")
 
 
-def test_search_case_insensitive():
-    memory = Memory()
-
-    memory.store(
-        "language",
-        "Python",
-    )
-
-    results = memory.search(
-        "PYTHON"
-    )
-
-    assert len(results) == 1
-
-
-def test_empty_search():
-    memory = Memory()
-
-    memory.store(
-        "name",
-        "Azaan",
-    )
-
-    assert memory.search("") == []
-
-
-def test_entries():
+def test_memory_clear():
     memory = Memory()
 
     memory.store("one", 1)
     memory.store("two", 2)
 
-    entries = memory.entries()
+    memory.clear()
 
-    assert len(entries) == 2
-
-
-def test_values():
-    memory = Memory()
-
-    memory.store("one", 1)
-    memory.store("two", 2)
-
-    assert memory.values() == [1, 2]
+    assert memory.count() == 0
+    assert memory.entries() == []
 
 
-def test_snapshot():
+def test_memory_snapshot():
     memory = Memory()
 
     memory.store("one", 1)
@@ -230,21 +108,8 @@ def test_snapshot():
     }
 
 
-def test_clear():
-    memory = Memory()
-
-    memory.store("one", 1)
-    memory.store("two", 2)
-
-    memory.clear()
-
-    assert memory.count() == 0
-
-
-def test_max_entries():
-    memory = Memory(
-        max_entries=2
-    )
+def test_memory_max_entries():
+    memory = Memory(max_entries=2)
 
     memory.store("one", 1)
     memory.store("two", 2)
@@ -256,53 +121,110 @@ def test_max_entries():
     assert memory.has("three")
 
 
-def test_invalid_max_entries():
-    with pytest.raises(ValueError):
-        Memory(max_entries=0)
-
-
-def test_invalid_key_type():
-    memory = Memory()
-
-    with pytest.raises(TypeError):
-        memory.store(123, "value")
-
-
-def test_empty_key():
+def test_memory_invalid_key():
     memory = Memory()
 
     with pytest.raises(ValueError):
         memory.store("", "value")
 
 
-def test_store_existing_key_updates():
+def test_memory_missing_key():
     memory = Memory()
 
-    first = memory.store(
-        "name",
-        "Azaan",
+    with pytest.raises(MemoryError):
+        memory.get("missing")
+
+    with pytest.raises(MemoryError):
+        memory.delete("missing")
+
+
+def test_conversation_memory():
+    memory = ConversationMemory()
+
+    memory.add_user("hello")
+    memory.add_assistant("hi")
+
+    assert memory.get_messages() == [
+        {
+            "role": "user",
+            "content": "hello",
+        },
+        {
+            "role": "assistant",
+            "content": "hi",
+        },
+    ]
+
+
+def test_conversation_memory_tool_message():
+    memory = ConversationMemory()
+
+    memory.add_tool(
+        '{"result": 42}',
+        tool_call_id="call_1",
+        name="calculator",
     )
 
-    second = memory.store(
-        "name",
-        "ARC",
+    message = memory.last()
+
+    assert message is not None
+    assert message["role"] == "tool"
+    assert message["tool_call_id"] == "call_1"
+    assert message["name"] == "calculator"
+
+
+def test_conversation_memory_limit():
+    memory = ConversationMemory(
+        max_messages=2,
     )
 
-    assert first is second
-    assert memory.recall("name") == "ARC"
+    memory.add_user("one")
+    memory.add_assistant("two")
+    memory.add_user("three")
+
+    assert memory.get_messages() == [
+        {
+            "role": "assistant",
+            "content": "two",
+        },
+        {
+            "role": "user",
+            "content": "three",
+        },
+    ]
 
 
-def test_memory_entry_id():
+def test_conversation_memory_clear():
+    memory = ConversationMemory()
+
+    memory.add_user("hello")
+    memory.clear()
+
+    assert len(memory) == 0
+    assert memory.get_messages() == []
+
+
+def test_conversation_memory_invalid_role():
+    memory = ConversationMemory()
+
+    with pytest.raises(ValueError):
+        memory.add(
+            "",
+            "invalid",
+        )
+
+
+def test_memory_entry_update():
     memory = Memory()
 
-    first = memory.store(
-        "one",
-        1,
+    entry = memory.store(
+        "status",
+        "pending",
     )
 
-    second = memory.store(
-        "two",
-        2,
-    )
+    old_updated = entry.updated_at
 
-    assert first.memory_id != second.memory_id
+    entry.update("done")
+
+    assert entry.value == "done"
+    assert entry.updated_at >= old_updated

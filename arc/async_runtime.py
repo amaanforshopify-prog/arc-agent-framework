@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -11,12 +12,17 @@ from .tracing import Tracer
 from .types import AgentResult, Message
 
 
-class AgentRuntime:
-    """Executes an LLM agent with tools, memory, persistence and tracing."""
+class AsyncAgentRuntime:
+    """
+    Async counterpart to AgentRuntime.
+
+    Runs synchronous and asynchronous models/tools through
+    the same iterative tool-calling architecture.
+    """
 
     def __init__(
         self,
-        model: Model,
+        model: Any,
         tools: ToolRegistry | None = None,
         max_iterations: int = 10,
         tracer: Tracer | None = None,
@@ -29,10 +35,22 @@ class AgentRuntime:
             )
 
         self.model = model
-        self.tools = tools or ToolRegistry()
+        self.tools = (
+            tools
+            if tools is not None
+            else ToolRegistry()
+        )
         self.max_iterations = max_iterations
-        self.tracer = tracer or Tracer()
-        self.memory = memory if memory is not None else ConversationMemory()
+        self.tracer = (
+            tracer
+            if tracer is not None
+            else Tracer()
+        )
+        self.memory = (
+            memory
+            if memory is not None
+            else ConversationMemory()
+        )
         self.persistent_memory = persistent_memory
 
     def _load_messages(self) -> list[Message]:
@@ -47,42 +65,15 @@ class AgentRuntime:
         if self.persistent_memory is not None:
             self.persistent_memory.add(message)
 
-    def _append_tool_calls(
-        self,
-        message: Any,
-    ) -> list[Any]:
-        return list(
-            getattr(
-                message,
-                "tool_calls",
-                None,
-            )
-            or []
-        )
-
-    def _assistant_message(
-        self,
-        message: Any,
-    ) -> Message:
-        return Message(
-            role="assistant",
-            content=getattr(
-                message,
-                "content",
-                None,
-            ) or "",
-            tool_calls=self._append_tool_calls(
-                message
-            ),
-        )
-
-    def run(
+    async def run(
         self,
         system_prompt: str,
         user_input: str,
     ) -> AgentResult:
         if not isinstance(system_prompt, str):
-            raise TypeError("system_prompt must be a string.")
+            raise TypeError(
+                "system_prompt must be a string."
+            )
 
         if not system_prompt.strip():
             raise ValueError(
@@ -90,7 +81,9 @@ class AgentRuntime:
             )
 
         if not isinstance(user_input, str):
-            raise TypeError("user_input must be a string.")
+            raise TypeError(
+                "user_input must be a string."
+            )
 
         if not user_input.strip():
             raise ValueError(
@@ -130,37 +123,60 @@ class AgentRuntime:
                 iteration=iteration,
             )
 
-            response = self.model.generate(
-                messages=messages,
-                tools=self.tools.schemas(),
+            generate_async = getattr(
+                self.model,
+                "generate_async",
+                None,
             )
+
+            if callable(generate_async):
+                response = await generate_async(
+                    messages=messages,
+                    tools=self.tools.schemas(),
+                )
+            else:
+                response = await asyncio.to_thread(
+                    self.model.generate,
+                    messages=messages,
+                    tools=self.tools.schemas(),
+                )
 
             assistant = response.choices[0].message
-            tool_calls = self._append_tool_calls(
-                assistant
+
+            tool_calls = list(
+                getattr(
+                    assistant,
+                    "tool_calls",
+                    None,
+                )
+                or []
             )
 
-            assistant_message = self._assistant_message(
-                assistant
-            )
-
-            # Final answer
-            if not tool_calls:
-                output = (
+            assistant_message = Message(
+                role="assistant",
+                content=(
                     getattr(
                         assistant,
                         "content",
                         None,
                     )
                     or ""
-                )
+                ),
+                tool_calls=tool_calls,
+            )
 
+            if not tool_calls:
                 self._save_message(
                     assistant_message
                 )
 
                 messages.append(
                     assistant_message
+                )
+
+                output = (
+                    assistant_message.content
+                    or ""
                 )
 
                 self.tracer.record(
@@ -174,15 +190,19 @@ class AgentRuntime:
                     messages=list(messages),
                     metadata={
                         "iterations": iteration,
-                        "memory_count": self.memory.count(),
-                        "persistent_memory": (
-                            self.persistent_memory is not None
+                        "memory_count": (
+                            self.memory.count()
                         ),
-                        "trace": self.tracer.get_events(),
+                        "persistent_memory": (
+                            self.persistent_memory
+                            is not None
+                        ),
+                        "trace": (
+                            self.tracer.get_events()
+                        ),
                     },
                 )
 
-            # Tool request
             self.tracer.record(
                 "llm",
                 "Tool call requested",
@@ -226,7 +246,7 @@ class AgentRuntime:
                             "Tool arguments must decode to an object."
                         )
 
-                    result = self.tools.execute(
+                    result = await self.tools.execute_async(
                         tool_name,
                         **arguments,
                     )
@@ -240,7 +260,7 @@ class AgentRuntime:
 
                 except Exception as exc:
                     result = {
-                        "error": str(exc),
+                        "error": str(exc)
                     }
 
                     self.tracer.record(
@@ -250,17 +270,20 @@ class AgentRuntime:
                         error=str(exc),
                     )
 
-                if isinstance(result, str):
-                    tool_content = result
+                if isinstance(
+                    result,
+                    str,
+                ):
+                    content = result
                 else:
-                    tool_content = json.dumps(
+                    content = json.dumps(
                         result,
                         default=str,
                     )
 
                 tool_message = Message(
                     role="tool",
-                    content=tool_content,
+                    content=content,
                     tool_call_id=tool_call.id,
                     name=tool_name,
                 )
@@ -273,15 +296,7 @@ class AgentRuntime:
                     tool_message
                 )
 
-        self.tracer.record(
-            "error",
-            "Maximum iterations exceeded",
-            max_iterations=self.max_iterations,
-        )
-
         raise RuntimeError(
-            f"Agent exceeded maximum iterations: "
+            "Agent exceeded maximum iterations: "
             f"{self.max_iterations}"
         )
-
-

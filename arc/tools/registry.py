@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
@@ -6,65 +6,50 @@ from .base import Tool, ToolError
 
 
 class ToolRegistry:
-    """
-    Stores and manages ARC tools.
-    """
+    """Registry for ARC tools."""
 
     def __init__(self):
         self._tools: dict[str, Tool] = {}
 
     def register(self, tool: Tool) -> Tool:
-        """Register a tool."""
         if not isinstance(tool, Tool):
-            raise TypeError("Only Tool instances can be registered.")
+            raise TypeError(
+                "tool must be a Tool instance."
+            )
 
         if tool.name in self._tools:
             raise ToolError(
-                f"Tool '{tool.name}' is already registered."
+                f"Tool already registered: {tool.name}"
             )
 
         self._tools[tool.name] = tool
-
         return tool
 
-    def register_many(self, *tools: Tool) -> None:
-        """Register multiple tools."""
-        for item in tools:
-            self.register(item)
-
-    def unregister(self, name: str) -> Tool:
-        """Remove and return a registered tool."""
-        if name not in self._tools:
-            raise ToolError(
-                f"Tool '{name}' is not registered."
-            )
-
-        return self._tools.pop(name)
+    def register_many(
+        self,
+        *tools: Tool,
+    ) -> None:
+        for tool in tools:
+            self.register(tool)
 
     def get(self, name: str) -> Tool:
-        """Get a tool by name."""
+        if not isinstance(name, str):
+            raise TypeError(
+                "tool name must be a string."
+            )
+
         if name not in self._tools:
             raise ToolError(
-                f"Tool '{name}' is not registered."
+                f"Unknown tool: {name}"
             )
 
         return self._tools[name]
 
     def has(self, name: str) -> bool:
-        """Check whether a tool exists."""
-        return name in self._tools
-
-    def list(self) -> list[Tool]:
-        """Return all registered tools."""
-        return list(self._tools.values())
-
-    def names(self) -> list[str]:
-        """Return registered tool names."""
-        return list(self._tools.keys())
-
-    def count(self) -> int:
-        """Return number of registered tools."""
-        return len(self._tools)
+        return (
+            isinstance(name, str)
+            and name in self._tools
+        )
 
     def execute(
         self,
@@ -72,8 +57,10 @@ class ToolRegistry:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Execute a registered tool."""
-        return self.get(name).execute(*args, **kwargs)
+        return self.get(name).execute(
+            *args,
+            **kwargs,
+        )
 
     async def execute_async(
         self,
@@ -81,9 +68,66 @@ class ToolRegistry:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Execute a registered tool asynchronously."""
-        return await self.get(name).execute_async(*args, **kwargs)
+        tool = self.get(name)
+
+        if not hasattr(tool, "execute_async"):
+            raise ToolError(
+                f"Tool '{name}' does not support async execution."
+            )
+
+        return await tool.execute_async(
+            *args,
+            **kwargs,
+        )
+
+    def unregister(self, name: str) -> Tool:
+        if name not in self._tools:
+            raise ToolError(
+                f"Unknown tool: {name}"
+            )
+
+        return self._tools.pop(name)
 
     def clear(self) -> None:
-        """Remove all tools."""
         self._tools.clear()
+
+    def list_tools(self) -> list[Tool]:
+        return list(
+            self._tools.values()
+        )
+
+    def names(self) -> list[str]:
+        return list(
+            self._tools.keys()
+        )
+
+    def count(self) -> int:
+        return len(self._tools)
+
+    def schemas(self) -> list[dict[str, Any]]:
+        """
+        Return OpenAI-compatible function tool schemas.
+
+        This is consumed by the LLM runtime so the model knows
+        which tools are available and what arguments they accept.
+        """
+
+        schemas: list[dict[str, Any]] = []
+
+        for tool in self._tools.values():
+            schema_method = getattr(
+                tool,
+                "schema",
+                None,
+            )
+
+            if not callable(schema_method):
+                raise ToolError(
+                    f"Tool '{tool.name}' does not provide a schema()."
+                )
+
+            schemas.append(
+                schema_method()
+            )
+
+        return schemas

@@ -1,44 +1,100 @@
-﻿import asyncio
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from typing import Any, Callable, TypeVar
+from __future__ import annotations
 
-T = TypeVar("T")
+import asyncio
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from typing import Any, Callable
 
 
 class TimeoutError(Exception):
-    """Raised when an operation exceeds its timeout."""
+    """Raised when an operation exceeds its allowed timeout."""
 
 
 class TimeoutManager:
-    """Execute operations with a maximum allowed execution time."""
+    """
+    Manages synchronous and asynchronous operation timeouts.
 
-    def __init__(self, default_timeout: float = 30.0):
-        if default_timeout <= 0:
-            raise ValueError("default_timeout must be greater than 0")
+    Supports:
+    - Synchronous callable execution
+    - Asynchronous callable execution
+    - Per-call timeout overrides
+    - Default timeout configuration
+    - Graceful executor shutdown
+    """
 
-        self.default_timeout = default_timeout
-        self._executor = ThreadPoolExecutor()
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        max_workers: int = 8,
+    ) -> None:
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than 0")
+
+        if max_workers <= 0:
+            raise ValueError("max_workers must be greater than 0")
+
+        self.timeout = timeout
+        self.max_workers = max_workers
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._shutdown = False
+
+    def _resolve_timeout(self, timeout: float | None) -> float:
+        """Resolve and validate the effective timeout."""
+
+        effective_timeout = self.timeout if timeout is None else timeout
+
+        if effective_timeout <= 0:
+            raise ValueError("timeout must be greater than 0")
+
+        return effective_timeout
+
+    def _ensure_active(self) -> None:
+        """Ensure the timeout manager has not been shut down."""
+
+        if self._shutdown:
+            raise RuntimeError("TimeoutManager has been shut down")
 
     def run(
         self,
-        func: Callable[..., T],
+        func: Callable[..., Any],
         *args: Any,
         timeout: float | None = None,
         **kwargs: Any,
-    ) -> T:
-        """Run a synchronous function with a timeout."""
-        timeout = self._validate_timeout(timeout)
+    ) -> Any:
+        """
+        Execute a synchronous callable with a timeout.
 
-        future = self._executor.submit(func, *args, **kwargs)
+        Args:
+            func: Callable to execute.
+            *args: Positional arguments passed to the callable.
+            timeout: Optional per-call timeout override.
+            **kwargs: Keyword arguments passed to the callable.
+
+        Returns:
+            The callable's return value.
+
+        Raises:
+            TimeoutError: If execution exceeds the timeout.
+            ValueError: If timeout is invalid.
+            RuntimeError: If manager has been shut down.
+        """
+
+        self._ensure_active()
+        effective_timeout = self._resolve_timeout(timeout)
+
+        future: Future[Any] = self._executor.submit(
+            func,
+            *args,
+            **kwargs,
+        )
 
         try:
-            return future.result(timeout=timeout)
+            return future.result(timeout=effective_timeout)
 
-        except FutureTimeoutError:
+        except FutureTimeoutError as exc:
             future.cancel()
             raise TimeoutError(
-                f"Operation timed out after {timeout:.2f} seconds."
-            )
+                f"Operation timed out after {effective_timeout} seconds"
+            ) from exc
 
     async def run_async(
         self,
@@ -47,43 +103,69 @@ class TimeoutManager:
         timeout: float | None = None,
         **kwargs: Any,
     ) -> Any:
-        """Run sync or async functions with a timeout."""
-        timeout = self._validate_timeout(timeout)
+        """
+        Execute a synchronous or asynchronous callable asynchronously.
+
+        Async callables are executed directly under asyncio.wait_for().
+        Synchronous callables are moved to the thread pool.
+
+        Args:
+            func: Callable or coroutine function.
+            *args: Positional arguments.
+            timeout: Optional per-call timeout override.
+            **kwargs: Keyword arguments.
+
+        Returns:
+            The callable's return value.
+
+        Raises:
+            TimeoutError: If execution exceeds the timeout.
+            ValueError: If timeout is invalid.
+            RuntimeError: If manager has been shut down.
+        """
+
+        self._ensure_active()
+        effective_timeout = self._resolve_timeout(timeout)
 
         if asyncio.iscoroutinefunction(func):
+            coroutine = func(*args, **kwargs)
+
             try:
                 return await asyncio.wait_for(
-                    func(*args, **kwargs),
-                    timeout=timeout,
+                    coroutine,
+                    timeout=effective_timeout,
                 )
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as exc:
                 raise TimeoutError(
-                    f"Operation timed out after {timeout:.2f} seconds."
-                )
+                    f"Operation timed out after {effective_timeout} seconds"
+                ) from exc
 
         loop = asyncio.get_running_loop()
 
+        future = loop.run_in_executor(
+            self._executor,
+            lambda: func(*args, **kwargs),
+        )
+
         try:
             return await asyncio.wait_for(
-                loop.run_in_executor(
-                    self._executor,
-                    lambda: func(*args, **kwargs),
-                ),
-                timeout=timeout,
+                future,
+                timeout=effective_timeout,
             )
-        except asyncio.TimeoutError:
+
+        except asyncio.TimeoutError as exc:
             raise TimeoutError(
-                f"Operation timed out after {timeout:.2f} seconds."
-            )
-
-    def _validate_timeout(self, timeout: float | None) -> float:
-        value = self.default_timeout if timeout is None else timeout
-
-        if value <= 0:
-            raise ValueError("timeout must be greater than 0")
-
-        return value
+                f"Operation timed out after {effective_timeout} seconds"
+            ) from exc
 
     def shutdown(self) -> None:
-        """Release resources used by the manager."""
-        self._executor.shutdown(wait=False)
+        """Shutdown the underlying thread pool."""
+
+        if self._shutdown:
+            return
+
+        self._shutdown = True
+        self._executor.shutdown(
+            wait=False,
+            cancel_futures=True,
+        )
