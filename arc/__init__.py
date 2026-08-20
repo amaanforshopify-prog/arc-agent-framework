@@ -48,6 +48,20 @@ from .async_runtime import AsyncAgentRuntime
 from .orchestrator import OrchestratorError, WorkflowOrchestrator, WorkflowResult
 from .workflow_state import DurableWorkflowState, WorkflowStateError
 from .checkpoint_engine import CheckpointResult, CheckpointedWorkflowEngine
+from .agent_workflow import AgentWorkflowEngine, AgentWorkflowError, AgentWorkflowResult, AgentWorkflowStep
+from .multi_agent import AgentExecutionResult, AgentSpec, MultiAgentCoordinator, MultiAgentError, MultiAgentResult
+
+from .tool_aware_runtime import ToolAwareRuntime
+
+from .tool_intelligence import (
+    ToolApprovalError,
+    ToolExecutionRecord,
+    ToolExecutionResult,
+    ToolIntelligence,
+    ToolIntelligenceError,
+    ToolPolicy,
+    ToolValidator,
+)
 
 from .workflow_engine import (
     ConditionalStep,
@@ -99,6 +113,14 @@ __all__ = [
     "TimeoutManager",
 
     "Tool",
+    "ToolAwareRuntime",
+    "ToolApprovalError",
+    "ToolExecutionRecord",
+    "ToolExecutionResult",
+    "ToolIntelligence",
+    "ToolIntelligenceError",
+    "ToolPolicy",
+    "ToolValidator",
     "ToolError",
     "ToolRegistry",
     "tool",
@@ -143,6 +165,15 @@ __all__ = [
     "WorkflowStateError",
     "CheckpointResult",
     "CheckpointedWorkflowEngine",
+    "AgentWorkflowEngine",
+    "AgentWorkflowError",
+    "AgentWorkflowResult",
+    "AgentWorkflowStep",
+    "AgentExecutionResult",
+    "AgentSpec",
+    "MultiAgentCoordinator",
+    "MultiAgentError",
+    "MultiAgentResult",
 
     "Trace",
     "TraceError",
@@ -154,6 +185,11 @@ __all__ = [
     "RetryPolicy",
     "RetryStats",
 ]
+
+
+
+
+
 
 
 

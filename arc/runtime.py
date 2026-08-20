@@ -76,6 +76,17 @@ class AgentRuntime:
             ),
         )
 
+    def _execute_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ):
+        """Execute a tool through the registry safety layer."""
+        return self.tools.execute_safe(
+            tool_name,
+            **arguments,
+        )
+
     def run(
         self,
         system_prompt: str,
@@ -226,16 +237,25 @@ class AgentRuntime:
                             "Tool arguments must decode to an object."
                         )
 
-                    result = self.tools.execute(
+                    safe_result = self._execute_tool(
                         tool_name,
-                        **arguments,
+                        arguments,
                     )
+
+                    if not safe_result.success:
+                        raise safe_result.error or RuntimeError(
+                            f"Tool '{tool_name}' failed."
+                        )
+
+                    result = safe_result.output
 
                     self.tracer.record(
                         "tool",
                         "Tool execution completed",
                         tool=tool_name,
                         result=result,
+                        attempts=safe_result.attempts,
+                        duration=safe_result.duration,
                     )
 
                 except Exception as exc:
@@ -283,5 +303,7 @@ class AgentRuntime:
             f"Agent exceeded maximum iterations: "
             f"{self.max_iterations}"
         )
+
+
 
 
